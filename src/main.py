@@ -9,6 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.chrome.options import Options
 
 from os import getcwd
 from os.path import join, abspath
@@ -18,6 +19,7 @@ class Route:
         self.inbound = inbound
         self.outbound = outbound
         self.next = None
+        self.available = None
         self.distance = float('inf')
 
     def set_distance(self, distance:int) -> None:
@@ -59,47 +61,142 @@ def generate_station_nodes():
 
 def browser_operation(nodes:Route):
 
-    browser = webdriver.Chrome(executable_path=driver_path)
-    browser.get("https://predaj.zssk.sk/search")
-
-    time.sleep(4)
-
-    # Refuse cookies
-    browser.find_element_by_id('c-p-bn2').click()
-
-    inbound_station_input = browser.find_element_by_xpath('dddd/html/body/div[1]/div/div[2]/div[3]/div/div/form/div[1]/div/div[1]/div[1]/div[1]/input')
-    outbound_station_input = browser.find_element_by_xpath('/html/body/div[1]/div/div[2]/div[3]/div/div/form/div[1]/div/div[1]/div[1]/div[3]/input')
-    departure_time_input = browser.find_element_by_xpath('/html/body/div[1]/div/div[2]/div[3]/div/div/form/div[1]/div/div[2]/div[2]/div/input')
-    departure_date_input = browser.find_element_by_xpath('/html/body/div[1]/div/div[2]/div[3]/div/div/form/div[1]/div/div[2]/div[1]/div[1]/input')
-    direct_only_input = browser.find_element_by_xpath('/html/body/div[1]/div/div[2]/div[3]/div/div/form/div[2]/div/div/div/div[2]/div/div[1]/span/ul/li[2]/div/input')
-    search_route_button = browser.find_element_by_id('actionSearchConnectionButton')
-
-    departure_date = datetime.strptime(raw_route_data['date'], '%d.%m.%Y')
 
     node = nodes
     while node is not None:
+        browser = webdriver.Chrome(executable_path=driver_path)
+        # browser.minimize_window()
+        browser.get("https://predaj.zssk.sk/search")
+        
+
+        wait = WebDriverWait(browser, timeout=10)
+    
+
+        # Wait for page to load
+        wait.until(EC.visibility_of_element_located((By.ID, 'actionSearchConnectionButton')))
+        time.sleep(0.5)
+
+        # Refuse cookies
+        try:
+            browser.find_element(By.ID, 'c-p-bn2').click()
+        except Exception:
+            pass
+
+        wait.until(EC.visibility_of_element_located((By.ID, 'actionSearchConnectionButton')))
+        time.sleep(0.5)
+        
+
+        inbound_station_input = browser.find_element(By.ID, 'fromInput')
+        outbound_station_input = browser.find_element(By.ID, 'toInput')
+        departure_time_input = browser.find_element(By.ID, 'departTime')
+        departure_date_input = browser.find_element(By.ID, 'departDate')
+        direct_only_input = browser.find_element(By.ID, 'TrainSearchFormDirect')
+        search_route_button = browser.find_element(By.ID, 'actionSearchConnectionButton')
+
+        departure_date = datetime.strptime(raw_route_data['date'], '%d.%m.%Y')
+
         #Set outbound and inbound stations
+        inbound_station_input.clear()
+        time.sleep(0.1)
         inbound_station_input.send_keys(node.inbound)
+        outbound_station_input.clear()
+        time.sleep(0.1)
         outbound_station_input.send_keys(node.outbound)
         #set departure time and date
         departure_time_input.clear()
-        departure_time_input.send_keys('0:00')
-        time.sleep(0.5)
+        departure_time_input.send_keys(raw_route_data['departure_time'])
+        time.sleep(0.1)
         browser.execute_script(f"arguments[0].value = '{departure_date.strftime('%#d. %#m. %Y')}';", departure_date_input)
         
         #Set direct conneciton only
-        browser.execute_script()
-        direct_only_input
-        time.sleep(0.5)
+        browser.execute_script(f'arguments[0].checked = true', direct_only_input)
+        time.sleep(0.8)
+
+
+
         search_route_button.click()
 
-        # Try to find train ID my loading more routes up to 10 times
-        # for i in range(10):
-        #     try:
-        #         browser.find_element_by_xpath(f"//span[contains(text(), '{raw_route_data['train_ID']}')]")
-        #     except NoSuchElementException:
+        wait.until(EC.visibility_of_element_located((By.ID, 'j_idt503')))
 
-    
+
+        # Try to find train ID my loading more routes up to 15 times
+        for i in range(15):
+            try:
+                queried_connection = browser.find_element(By.XPATH, f"//span[contains(text(), '{raw_route_data['train_ID']}')]")
+                break
+            except NoSuchElementException:
+                    try:
+                        browser.find_element(By.ID,'j_idt503').click()
+                    except Exception:
+                        continue
+                    time.sleep(1.8)
+
+
+        # Get distance
+        distance = browser.find_element(By.XPATH, f"//span[contains(text(), '{raw_route_data['train_ID']}')]/../../../../../../ \
+                                                 div[contains(@class, 'connectionSummary')]/div[contains(@class, 'connectionDistance')]")
+        node.distance = distance.text.split()[0]
+
+        # Add to cart
+        time.sleep(0.5)
+        browser.find_element(By.XPATH, f"//span[contains(text(), '{raw_route_data['train_ID']}')]/../../../../../../div").click()
+        time.sleep(0.5)
+        cart_button = browser.find_element(By.XPATH, f"//span[contains(text(), '{raw_route_data['train_ID']}')]/../../../../../../../../div[2]/div/div/div[1]/a[1]")
+        cart_button.click()
+
+
+        # Wait for page to load
+        wait.until(EC.visibility_of_element_located((By.ID, 'actionIndividualContinue')))
+
+
+        # Select age category
+        browser.find_element(By.XPATH, "//*[contains(@data-cy, 'ageCategory-0')]").click()
+        time.sleep(0.5)
+        browser.find_element(By.XPATH, "//*[contains(text(), 'Mladý  16 - 25 r.')]").click()
+        time.sleep(0.5)
+
+        # Select ISIC discount
+        browser.find_element(By.XPATH, "//*[contains(@data-cy, 'discountType-0')]").click()
+        time.sleep(0.5)
+        browser.find_element(By.XPATH, "//*[contains(text(), 'ISIC aktivovaný školou v SR')]").click()
+        time.sleep(0.5)
+
+        # Activate discount
+        browser.find_element(By.XPATH, "//*[contains(@data-cy, 'freeTicket-0')]").click()
+        time.sleep(0.5) 
+        
+        # Continue to next tep
+        browser.find_element(By.ID, 'actionIndividualContinue').click()
+
+        # Wait for page to load
+        wait.until(EC.visibility_of_element_located((By.ID, 'ticketsForm:offerPanel:final-price:j_idt586')))
+        browser.find_element(By.ID, 'ticketsForm:offerPanel:final-price:j_idt586').click()
+
+        try:
+            time.sleep(1)
+            browser.find_element(By.XPATH, "//h1[contains(text(), 'Obsah košíka')]")
+        except:
+            node.available = False
+
+        while True:
+            if browser.current_url == 'https://predaj.zssk.sk/cart':
+                node.available = True
+                break
+            else:
+                try:
+                    browser.find_element(By.XPATH, "//*[contains(text(), 'Na zvolené spojenie už nie sú k dispozícii bezplatné lístky')]")
+                    node.available = False
+                    break
+                except NoSuchElementException:        
+                    pass
+        browser.close()
+        node = node.next
+
+    print('-'*80)
+    print(f"Report for: {raw_route_data['train_ID']} on {raw_route_data['date']} at {raw_route_data['departure_time']}")
+    node = nodes
+    while node is not None:
+        print(f"{node.inbound} -> {node.outbound}, Availability: {node.available}")
         node = node.next
 
 
